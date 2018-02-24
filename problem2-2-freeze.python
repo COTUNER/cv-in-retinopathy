@@ -1,0 +1,211 @@
+import pandas as pd
+import math
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.autograd import Variable
+import numpy as np
+import torchvision
+from torchvision import datasets, models, transforms
+import matplotlib.pyplot as plt
+import os
+from torchvision import models
+from PIL import Image 
+import torch.nn.functional as F
+import time
+import sys
+import h5py
+import argparse
+
+
+plt.ion()
+
+
+print('Start')
+#define my own data loader
+def default_loader(path):  
+    return Image.open(path).convert('RGB') 
+
+class myImageFloder(torch.utils.data.Dataset):  
+    def __init__(self, root, label, transform, target_transform=None, loader=default_loader): 
+        fh = open(label)  
+        c=0  
+        imgs=[]  
+        class_names=[]  
+        for line in  fh.readlines():
+            if c==0:  
+                class_names=[n.strip() for n in line.rstrip().split('   ')]
+            else:
+                #print('st')
+                cls = line.split()                
+                fn = cls.pop(0)
+                fn = fn+'.jpg'
+                if os.path.isfile(os.path.join(root, fn)):   
+                    imgs.append((fn, int(cls[0])-1)) 
+            c=c+1
+        self.root = root  
+        self.imgs = imgs  
+        self.classes = class_names  
+        self.transform = transform  
+        self.target_transform = target_transform  
+        self.loader = loader  
+  
+    def __getitem__(self, index):  
+        fn, label = self.imgs[index]  
+        img_path = os.path.join(self.root, fn)
+        
+        with Image.open(img_path) as imgg:
+            image = imgg.convert('RGB')
+            
+        #print('before',self.imgs[index][1])
+        label = np.array([self.imgs[index][1]])
+        #print(label)
+        
+        label = torch.from_numpy(label).type(torch.LongTensor)
+        #print(label)
+        if self.transform is not None:
+            image = self.transform(image)
+        return image, label
+  
+    def __len__(self):  
+        return len(self.imgs)  
+      
+    def getName(self):  
+        return self.classes  
+
+
+
+#define my transform
+mytransform = transforms.Compose([
+        #transforms.Resize(224),
+        transforms.RandomResizedCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ])
+
+
+
+#load data
+datasett = myImageFloder(root = "/Users/yiheyang/Desktop/cv/image", label = "/Users/yiheyang/Desktop/cv/annotations/list.txt", transform = mytransform )
+imgLoader = torch.utils.data.DataLoader(datasett, batch_size=8, shuffle= False, num_workers= 4)  
+
+
+#model = models.vgg16(pretrained=True)
+#print the original weight of vgg-16's classifier's first layer
+#print(list(model.children())[1][0].state_dict()['weight'])
+
+
+class vgg_net(nn.Module):
+    def __init__(self):
+        super(vgg_net, self).__init__()
+        vgg = models.vgg16(pretrained=True)
+
+        for i, param in enumerate(vgg.parameters()):
+            param.requires_grad = False
+
+        self.feature = nn.Sequential(*list(vgg.children())[:-1])
+
+        vgga = list(vgg.children())
+        self.classifier = nn.Sequential()
+        for i in range(len(vgga[1])-1):
+            self.classifier.add_module(str(i),vgga[1][i])
+            
+        self.classifier.add_module('6',nn.Linear(4096,37))
+        
+    def forward(self, x):
+        x = self.feature(x)
+        x = x.view(x.size(0), -1)
+        x = self.classifier(x)
+        return F.log_softmax(x, dim=1)
+        #return x
+    
+model = vgg_net()
+
+#show the structure of new net
+print('This is the structure of freeze net: ')
+print(model)
+
+#Next 3 lines can prove that the new net's weight is same as the vgg-16, different from random initialize
+#print(list(model.children())[1][0].state_dict()['weight'])
+#aa = nn.Linear(4096,25088)
+#print(aa.state_dict()['weight'])
+
+#define loss function and optimizer
+criterion = nn.CrossEntropyLoss()
+optimzer = optim.SGD(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-3, momentum = 0.9)
+
+
+
+#train the vgg_net
+trainst = time.time()
+for epoch in range(1):
+    running_loss = 0.0
+    for i, data in enumerate(imgLoader,0):
+        input, target = data
+        target.resize_(8)
+        input, target = Variable(input),Variable(target)
+        
+        optimzer.zero_grad()
+        output = model(input)
+        print(output.shape)
+            
+        print(type(output),output.shape)
+        print(type(target),target,target.shape)
+        loss = criterion(output,target) 
+ 
+        loss.backward()
+        optimzer.step()
+        running_loss += loss.data[0]
+        
+        if i % 200 ==199 or i==0:
+            toutput = model(input)
+            
+            tpred_y = torch.max(toutput, 1)[1]
+            accuracy = sum(tpred_y == target).data.numpy()[0] / float(target.size(0))
+            print ('[%d,%5d]loss:%.3f' % (epoch+1,i+1,running_loss/2000),'=>temporary accuracy: ',accuracy)
+            running_loss = 0.0
+
+        
+print('Finished Training')
+print("Running time: ",time.time()-trainst)
+
+
+
+
+
+newloader = torch.utils.data.DataLoader(datasett, batch_size=8, shuffle= False, num_workers= 4)
+
+
+testst = time.clock()
+hitt = 0
+summ = 0
+for i, data in enumerate(newloader,0):
+    inputs, label = data
+    label.resize_(8)
+    label = Variable(label)
+    #target = target.numpy()
+    #print('tt',target)
+
+    outputs = model(Variable(inputs))
+    #print('========================',outputs.shape)
+    
+    
+    pred = torch.max(outputs, 1)[1]
+    #print(outputs.data.numpy()[0])
+    #print(type(pred),type(target))
+    #print(pred,label)
+    
+    
+    hit = sum(pred == label).data.numpy()[0]
+    #print(hit)
+    hitt += hit
+    summ += len(pred)
+    print(i,hit)
+
+print('accuracy on dataset: ',hitt/summ)
+print('Running time: ',time.clock()-testst)
+
+
+
+
+

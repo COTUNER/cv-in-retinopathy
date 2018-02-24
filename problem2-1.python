@@ -1,0 +1,101 @@
+#!/usr/local/Cellar/python3
+
+from __future__ import print_function, division
+import pandas as pd
+import math
+import torch
+import torch.nn as nn
+from torch.autograd import Variable
+import numpy as np
+import torchvision
+from torchvision import datasets, models, transforms
+import matplotlib.pyplot as plt
+from torchvision import models
+
+data_dir = '/Users/yiheyang/Downloads/train'
+
+#define how the picture is transformed
+data_transforms = transforms.Compose([
+        transforms.RandomResizedCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ])
+
+#load the picture
+image_datasets = datasets.ImageFolder(data_dir,data_transforms)
+
+#define a data loader
+dataloders = torch.utils.data.DataLoader(image_datasets, batch_size=1,
+                                             shuffle=True, num_workers=1)
+
+
+dataset_sizes = len(image_datasets)
+
+class_names = image_datasets.classes
+
+use_gpu = torch.cuda.is_available()
+
+#define the show picture function
+def imshow(inp, title=None):
+    inp = inp.numpy().transpose((1, 2, 0))
+    mean = np.array([0.485, 0.456, 0.406])
+    std = np.array([0.229, 0.224, 0.225])
+    inp = std * inp + mean
+    plt.imshow(inp)
+    if title is not None:
+        plt.title(title) 
+
+#define a data iter
+dataiter = iter(dataloders)
+inputs, classes = dataiter.next()
+
+#create grid for the picture to show
+out = torchvision.utils.make_grid(inputs)
+
+#show the picture
+imshow(out, title=[class_names[x] for x in classes])
+
+plt.show()
+
+#load the pretrain model
+model = models.vgg16(pretrained=True)
+
+#get the output of the model
+result = model(Variable(inputs))
+
+#if I can use GPU, pass the result to cpu and transform to numpy
+result_npy=result.data.cpu().numpy()
+
+#get the highest output, which is also present the prediction
+max_index=np.argmax(result_npy[0])  
+
+summ = 0
+
+#import the name list of 1000 candidate
+name = pd.read_table("/Users/yiheyang/Desktop/cv/name.txt",header=None)
+
+for i in result_npy[0]:
+    summ += math.exp(i)
+
+#print the result
+for i in range(3):
+    namee = name[0][max_index].split(' ')[2]
+    output = result_npy[0][max_index]
+    possi = math.exp(output.round(3))/summ
+    
+    print("No.",i+1,"candidate is: ",name[0][max_index])
+    print("The output value of ",namee,": ",output)
+    print("The possibility of ",namee,"is ","%.2f" % (math.exp(output.round(3))/summ*100),"%")
+    print('')
+    result_npy[0][max_index]=0
+    max_index=np.argmax(result_npy[0])
+
+
+    
+
+
+
+
+
+
+
